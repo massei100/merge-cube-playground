@@ -1,1 +1,240 @@
-<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>머지큐브 3D 놀이터</title><style>:root{--b:#f5f6f8;--c:#fff;--t:#18202a;--s:#667085;--a:#3b82f6;--l:#e5e7eb}*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;background:var(--b);color:var(--t)}header{padding:14px 16px;background:#fff;border-bottom:1px solid var(--l);position:sticky;top:0;z-index:10}header b{font-size:19px}.wrap{max-width:920px;margin:auto;padding:14px}.card{background:var(--c);border:1px solid var(--l);border-radius:18px;padding:14px;margin-bottom:12px}.row{display:flex;gap:8px;flex-wrap:wrap}.btn{border:0;border-radius:14px;padding:11px 14px;background:#eef2f7;font-weight:700;cursor:pointer}.primary{background:var(--a);color:#fff}.danger{background:#fee2e2;color:#991b1b}.hint{font-size:13px;color:var(--s);line-height:1.5}.status{font-size:14px;font-weight:700;margin-top:8px}.models{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.modelBtn{padding:10px 4px;border:2px solid transparent;border-radius:14px;background:#f3f4f6;font-weight:700}.modelBtn.active{border-color:var(--a);background:#eff6ff}.emoji{font-size:28px;display:block}.stage{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:18px;overflow:hidden}.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.target{position:absolute;left:50%;top:50%;width:44%;aspect-ratio:1;transform:translate(-50%,-50%);border:3px dashed #ffffffcc;border-radius:12px;z-index:5}.target:after{content:'큐브 면을 이 네모 안에 맞추세요';position:absolute;bottom:-30px;left:50%;transform:translateX(-50%);white-space:nowrap;background:#0009;color:#fff;padding:5px 9px;border-radius:9px;font-size:12px}.faceGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.face{border:1px solid var(--l);border-radius:12px;overflow:hidden}.face canvas{width:100%;aspect-ratio:1;display:block;background:#eee}.face footer{padding:7px;text-align:center;font-size:12px;font-weight:700}.hidden{display:none!important}@media(max-width:650px){.models{grid-template-columns:repeat(3,1fr)}.faceGrid{grid-template-columns:repeat(2,1fr)}}</style></head><body><header><b>🧊 머지큐브 3D 놀이터</b></header><div class="wrap"><section class="card"><div class="row" style="justify-content:space-between;align-items:center"><div><b>1. 큐브 면 등록</b><div class="hint">실제 머지큐브의 각 면을 카메라로 한 번씩 등록해 사용합니다.</div></div><div class="row"><button id="startCam" class="btn primary">카메라 시작</button><button id="resetFaces" class="btn danger">등록 초기화</button></div></div><div id="faceGrid" class="faceGrid"></div><div class="row" style="margin-top:9px"><button id="addFace" class="btn" disabled>현재 면 등록</button><button id="exportCfg" class="btn">설정 내보내기</button><label class="btn" for="importCfg">설정 가져오기</label><input id="importCfg" type="file" accept="application/json" hidden></div></section><section class="card"><b>2. 보고 싶은 3D 고르기</b><div class="models" style="margin-top:10px"><button class="modelBtn active" data-model="cat"><span class="emoji">🐱</span>고양이</button><button class="modelBtn" data-model="dino"><span class="emoji">🦖</span>공룡</button><button class="modelBtn" data-model="car"><span class="emoji">🚗</span>자동차</button><button class="modelBtn" data-model="burger"><span class="emoji">🍔</span>햄버거</button><button class="modelBtn" data-model="robot"><span class="emoji">🤖</span>로봇</button></div><div class="row" style="margin-top:8px"><label class="btn" for="customGlb">＋ 내 GLB 추가</label><input id="customGlb" type="file" accept=".glb,model/gltf-binary" hidden><button id="smaller" class="btn">작게</button><button id="larger" class="btn">크게</button></div></section><section class="card"><div class="row" style="justify-content:space-between;align-items:center"><b>3. 큐브를 비춰보기</b><button id="trackBtn" class="btn primary" disabled>추적 시작</button></div><div class="stage"><video id="video" playsinline muted></video><canvas id="threeCanvas"></canvas><canvas id="debugCanvas"></canvas><div id="target" class="target"></div></div><div id="status" class="status">카메라를 시작해 주세요.</div><div class="hint">등록한 큐브 면을 이미지로 인식해 3D를 면 위에 표시합니다.</div></section></div><script async src="https://docs.opencv.org/4.x/opencv.js"></script><script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script><script type="module">import * as THREE from 'three';import{GLTFLoader}from'three/addons/loaders/GLTFLoader.js';const video=document.getElementById('video'),tc=document.getElementById('threeCanvas'),dc=document.getElementById('debugCanvas'),statusEl=document.getElementById('status'),addFace=document.getElementById('addFace'),trackBtn=document.getElementById('trackBtn'),target=document.getElementById('target'),faceGrid=document.getElementById('faceGrid');let stream=null,tracking=false,refs=[],refData=[],currentModel=null,modelScale=1,cvReady=false;const renderer=new THREE.WebGLRenderer({canvas:tc,alpha:true,antialias:true});renderer.setClearColor(0,0);const scene=new THREE.Scene(),camera=new THREE.OrthographicCamera(0,1,1,0,-100,100);scene.add(new THREE.HemisphereLight(0xffffff,0x666666,2.4));const dl=new THREE.DirectionalLight(0xffffff,2);dl.position.set(1,2,3);scene.add(dl);const loader=new GLTFLoader();function fit(){const r=video.getBoundingClientRect(),d=Math.min(devicePixelRatio||1,2);renderer.setSize(r.width,r.height,false);dc.width=r.width*d;dc.height=r.height*d;dc.style.width=r.width+'px';dc.style.height=r.height+'px'}addEventListener('resize',fit);const mat=c=>new THREE.MeshStandardMaterial({color:c,roughness:.65});function mesh(g,m,x=0,y=0,z=0){const o=new THREE.Mesh(g,m);o.position.set(x,y,z);return o}function fitGroup(g){const b=new THREE.Box3().setFromObject(g),s=new THREE.Vector3(),c=new THREE.Vector3();b.getSize(s);b.getCenter(c);g.position.sub(c);const k=.7/(Math.max(s.x,s.y,s.z)||1);g.scale.setScalar(k);g.userData.base=k;return g}function make(n){const g=new THREE.Group();if(n==='cat'){const f=mat(0xf2b66d),d=mat(0x332c2c),p=mat(0xff9db0);g.add(mesh(new THREE.SphereGeometry(.42,20,16),f,0,0,.12),mesh(new THREE.SphereGeometry(.28,20,16),f,0,.45,.18));for(const x of[-.18,.18])g.add(mesh(new THREE.ConeGeometry(.13,.28,3),f,x,.69,.18));g.add(mesh(new THREE.SphereGeometry(.04,10,8),d,-.1,.5,.43),mesh(new THREE.SphereGeometry(.04,10,8),d,.1,.5,.43),mesh(new THREE.SphereGeometry(.035,10,8),p,0,.42,.46))}else if(n==='dino'){const a=mat(0x64b96a),b=mat(0xa9df87),d=mat(0x2f5132);g.add(mesh(new THREE.SphereGeometry(.48,20,16),a,0,0,.08),mesh(new THREE.SphereGeometry(.29,20,16),a,.28,.42,.12));const neck=mesh(new THREE.CylinderGeometry(.12,.19,.48,14),a,.08,.24,.08);neck.rotation.z=-.45;g.add(neck);const tail=mesh(new THREE.ConeGeometry(.18,.72,16),a,-.5,-.05,.05);tail.rotation.z=-1.25;g.add(tail);for(let i=0;i<4;i++){const sp=mesh(new THREE.ConeGeometry(.08,.2,3),b,-.28+i*.16,.34,.12);sp.rotation.z=Math.PI;g.add(sp)}g.add(mesh(new THREE.SphereGeometry(.035,10,8),d,.36,.48,.36))}else if(n==='car'){const a=mat(0x4d89d9),b=mat(0xb7d9ee),d=mat(0x222222);g.add(mesh(new THREE.BoxGeometry(1.1,.38,.42),a,0,0,.12),mesh(new THREE.BoxGeometry(.62,.3,.38),a,.05,.28,.12),mesh(new THREE.BoxGeometry(.46,.19,.4),b,.05,.31,.15));for(const x of[-.35,.35])for(const z of[-.22,.22]){const w=mesh(new THREE.CylinderGeometry(.13,.13,.09,18),d,x,-.18,z);w.rotation.x=Math.PI/2;g.add(w)}}else if(n==='burger'){const a=mat(0xe6a24e),b=mat(0x6b3c26),c=mat(0xf4d35e),d=mat(0x6fbf73);g.add(mesh(new THREE.SphereGeometry(.48,20,14,0,Math.PI*2,0,Math.PI/2),a,0,.28,0),mesh(new THREE.CylinderGeometry(.46,.46,.11,24),d,0,.06,0),mesh(new THREE.CylinderGeometry(.43,.43,.16,24),b,0,-.07,0));const ch=mesh(new THREE.BoxGeometry(.72,.05,.72),c,0,.04,0);ch.rotation.y=.3;g.add(ch,mesh(new THREE.CylinderGeometry(.45,.47,.16,24),a,0,-.23,0))}else{const a=mat(0xb9c5d1),b=mat(0x5aa0e6),d=mat(0x334155);g.add(mesh(new THREE.BoxGeometry(.62,.68,.42),a,0,0,.08),mesh(new THREE.BoxGeometry(.52,.36,.4),a,0,.56,.08),mesh(new THREE.SphereGeometry(.045,10,8),b,-.13,.6,.3),mesh(new THREE.SphereGeometry(.045,10,8),b,.13,.6,.3));for(const x of[-.42,.42]){const arm=mesh(new THREE.CylinderGeometry(.06,.06,.48,10),d,x,.04,.08);arm.rotation.z=Math.PI/2;g.add(arm)}for(const x of[-.18,.18])g.add(mesh(new THREE.CylinderGeometry(.07,.07,.42,10),d,x,-.52,.08))}return fitGroup(g)}async function loadBuiltin(n){if(currentModel)scene.remove(currentModel);currentModel=make(n);scene.add(currentModel)}await loadBuiltin('cat');document.querySelectorAll('.modelBtn').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.modelBtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');await loadBuiltin(b.dataset.model)});document.getElementById('customGlb').onchange=e=>{const f=e.target.files[0];if(!f)return;loader.load(URL.createObjectURL(f),g=>{if(currentModel)scene.remove(currentModel);currentModel=fitGroup(g.scene);scene.add(currentModel);statusEl.textContent='내 GLB를 불러왔어요.'})};document.getElementById('smaller').onclick=()=>modelScale=Math.max(.45,modelScale*.85);document.getElementById('larger').onclick=()=>modelScale=Math.min(2.2,modelScale*1.15);function renderFaces(){faceGrid.innerHTML='';for(let i=0;i<6;i++){const d=document.createElement('div'),c=document.createElement('canvas'),f=document.createElement('footer');d.className='face';c.width=c.height=220;f.textContent=refs[i]?`면 ${i+1} ✓`:`면 ${i+1} 미등록`;d.append(c,f);faceGrid.append(d);if(refs[i]){const im=new Image();im.onload=()=>c.getContext('2d').drawImage(im,0,0,220,220);im.src=refs[i]}}trackBtn.disabled=!refs.length}function saveRefs(){localStorage.setItem('mergeCubeRefs',JSON.stringify(refs));renderFaces();prepareRefs()}try{refs=JSON.parse(localStorage.getItem('mergeCubeRefs')||'[]')}catch{}renderFaces();const t=setInterval(()=>{if(window.cv&&cv.Mat){clearInterval(t);cvReady=true;statusEl.textContent='준비 완료. 카메라를 시작하세요.';prepareRefs()}},400);document.getElementById('startCam').onclick=async()=>{try{if(!window.isSecureContext)throw Error('HTTPS 주소에서 열어주세요.');stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false});video.srcObject=stream;await video.play();addFace.disabled=false;fit();statusEl.textContent='카메라가 켜졌어요. 큐브 면을 네모 안에 맞춰 등록하세요.'}catch(e){statusEl.textContent='카메라를 열 수 없습니다: '+(e.message||e)}};addFace.onclick=()=>{if(!video.videoWidth)return;const c=document.createElement('canvas'),size=Math.min(video.videoWidth,video.videoHeight)*.48;c.width=c.height=420;const x=(video.videoWidth-size)/2,y=(video.videoHeight-size)/2;c.getContext('2d').drawImage(video,x,y,size,size,0,0,420,420);const data=c.toDataURL('image/jpeg',.88),i=refs.findIndex(v=>!v);if(i<0)refs[5]=data;else refs[i]=data;saveRefs();statusEl.textContent='면을 등록했습니다.'};document.getElementById('resetFaces').onclick=()=>{refs=[];localStorage.removeItem('mergeCubeRefs');refData.forEach(disposeRef);refData=[];renderFaces()};document.getElementById('exportCfg').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({version:1,refs})],{type:'application/json'}));a.download='merge-cube-face-settings.json';a.click()};document.getElementById('importCfg').onchange=e=>{const r=new FileReader();r.onload=()=>{try{refs=JSON.parse(r.result).refs||[];saveRefs();statusEl.textContent='설정을 가져왔습니다.'}catch{statusEl.textContent='설정 파일을 읽지 못했습니다.'}};r.readAsText(e.target.files[0])};function disposeRef(r){try{r.gray.delete();r.kp.delete();r.des.delete()}catch{}}function imageFrom(src){return new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=src})}async function prepareRefs(){if(!cvReady||!refs.length)return;refData.forEach(disposeRef);refData=[];for(const data of refs){if(!data)continue;const img=await imageFrom(data),can=document.createElement('canvas');can.width=can.height=360;can.getContext('2d').drawImage(img,0,0,360,360);const src=cv.imread(can),gray=new cv.Mat();cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);src.delete();const orb=new cv.ORB(850),kp=new cv.KeyPointVector(),des=new cv.Mat(),mask=new cv.Mat();orb.detectAndCompute(gray,mask,kp,des);orb.delete();mask.delete();refData.push({gray,kp,des,w:360,h:360})}trackBtn.disabled=!refData.length}trackBtn.onclick=()=>{tracking=!tracking;trackBtn.textContent=tracking?'추적 중지':'추적 시작';target.classList.toggle('hidden',tracking);if(!tracking){if(currentModel)currentModel.visible=false;dc.getContext('2d').clearRect(0,0,dc.width,dc.height)}};let work=document.createElement('canvas'),wctx=work.getContext('2d',{willReadFrequently:true}),last=0;function project(H,x,y){const h=H.data64F.length?H.data64F:Array.from(H.data32F),a=h[0]*x+h[1]*y+h[2],b=h[3]*x+h[4]*y+h[5],c=h[6]*x+h[7]*y+h[8];return[a/c,b/c]}function process(){if(!tracking||!cvReady||video.readyState<2||!refData.length)return;const now=performance.now();if(now-last<100)return;last=now;const W=480,H=Math.round(W*video.videoHeight/video.videoWidth);work.width=W;work.height=H;wctx.drawImage(video,0,0,W,H);const src=cv.imread(work),gray=new cv.Mat();cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);const orb=new cv.ORB(950),kp=new cv.KeyPointVector(),des=new cv.Mat(),mask=new cv.Mat();orb.detectAndCompute(gray,mask,kp,des);orb.delete();mask.delete();let best=null;if(!des.empty())for(let ri=0;ri<refData.length;ri++){const ref=refData[ri];if(ref.des.empty())continue;const matcher=new cv.BFMatcher(cv.NORM_HAMMING,false),matches=new cv.DMatchVectorVector();matcher.knnMatch(ref.des,des,matches,2);matcher.delete();const good=[];for(let i=0;i<matches.size();i++){const m=matches.get(i);if(m.size()>=2){const a=m.get(0),b=m.get(1);if(a.distance<.72*b.distance)good.push([a.queryIdx,a.trainIdx])}}matches.delete();if(good.length<12)continue;const sp=[],dp=[];for(const[q,t]of good){const a=ref.kp.get(q).pt,b=kp.get(t).pt;sp.push(a.x,a.y);dp.push(b.x,b.y)}const sm=cv.matFromArray(good.length,1,cv.CV_32FC2,sp),dm=cv.matFromArray(good.length,1,cv.CV_32FC2,dp),inl=new cv.Mat(),Hm=cv.findHomography(sm,dm,cv.RANSAC,4,inl);let score=0;for(let i=0;i<inl.rows;i++)score+=inl.ucharPtr(i)[0]?1:0;sm.delete();dm.delete();inl.delete();if(Hm.empty()||score<9){Hm.delete();continue}if(!best||score>best.score){if(best)best.H.delete();best={score,H:Hm,ref,face:ri}}else Hm.delete()}if(best){const r=best.ref,p=[project(best.H,0,0),project(best.H,r.w,0),project(best.H,r.w,r.h),project(best.H,0,r.h)],cx=p.reduce((s,q)=>s+q[0],0)/4,cy=p.reduce((s,q)=>s+q[1],0)/4,top=Math.hypot(p[1][0]-p[0][0],p[1][1]-p[0][1]),left=Math.hypot(p[3][0]-p[0][0],p[3][1]-p[0][1]),sz=(top+left)/2,ang=Math.atan2(p[1][1]-p[0][1],p[1][0]-p[0][0]);if(currentModel){currentModel.visible=true;currentModel.position.set(cx/W,1-cy/H,0);currentModel.rotation.z=-ang;currentModel.scale.setScalar((currentModel.userData.base||1)*(sz/W)*modelScale*2.05)}statusEl.textContent=`면 ${best.face+1} 인식 중 ✓`;best.H.delete()}else{if(currentModel)currentModel.visible=false;statusEl.textContent='큐브 면을 찾는 중…'}src.delete();gray.delete();kp.delete();des.delete()}function anim(){requestAnimationFrame(anim);process();renderer.render(scene,camera)}anim();</script></body></html>
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>머지큐브 3D 놀이터</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--text:#18202a;--sub:#667085;--accent:#3b82f6;--line:#e5e7eb;}
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif;background:var(--bg);color:var(--text)}
+header{padding:14px 16px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+header b{font-size:19px}.wrap{max-width:920px;margin:auto;padding:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin-bottom:12px;box-shadow:0 2px 10px #00000008}
+.row{display:flex;gap:8px;flex-wrap:wrap}.btn{border:0;border-radius:14px;padding:11px 14px;background:#eef2f7;color:#172033;font-weight:700;font-size:15px;cursor:pointer}.btn.primary{background:var(--accent);color:#fff}.btn.danger{background:#fee2e2;color:#991b1b}.btn:disabled{opacity:.45}.hint{font-size:13px;color:var(--sub);line-height:1.5}.status{font-size:14px;font-weight:700;margin-top:8px}.models{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}.modelBtn{padding:10px 4px;border:2px solid transparent;border-radius:14px;background:#f3f4f6;text-align:center;font-weight:700;cursor:pointer}.modelBtn.active{border-color:var(--accent);background:#eff6ff}.emoji{font-size:28px;display:block}.stage{position:relative;width:100%;aspect-ratio:4/3;background:#111;border-radius:18px;overflow:hidden}.stage video,.stage canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}.overlay2d{pointer-events:none}.target{position:absolute;left:50%;top:50%;width:44%;aspect-ratio:1;transform:translate(-50%,-50%);border:3px dashed #ffffffcc;border-radius:12px;z-index:5}.target::after{content:'큐브 면을 이 네모 안에 맞추세요';position:absolute;bottom:-30px;left:50%;transform:translateX(-50%);white-space:nowrap;background:#0009;color:#fff;padding:5px 9px;border-radius:9px;font-size:12px}.faceGrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}.face{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fafafa}.face canvas{width:100%;aspect-ratio:1;display:block;background:#eee}.face footer{padding:7px;text-align:center;font-size:12px;font-weight:700}.hidden{display:none!important}.pill{display:inline-block;background:#eef2ff;color:#3730a3;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800}.custom{margin-top:8px}.small{font-size:12px;padding:8px 10px}.captureBar{display:flex;gap:10px;align-items:center;margin-top:10px;position:sticky;bottom:8px;z-index:15;background:#fff;padding:8px;border-radius:16px;box-shadow:0 4px 18px #0002}.captureBar .btn{flex:1;font-size:17px;padding:14px}.captureProgress{min-width:72px;text-align:center;font-weight:900;color:#1d4ed8}.faceGrid{margin-top:10px}@media(max-width:650px){.models{grid-template-columns:repeat(3,1fr)}.faceGrid{grid-template-columns:repeat(3,1fr)}.face footer{font-size:11px;padding:5px}.captureBar{bottom:6px}}
+</style>
+</head>
+<body>
+<header><b>🧊 머지큐브 3D 놀이터</b></header>
+<div class="wrap">
+  <section class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div><b>1. 큐브 면 등록</b> <span class="pill">최초 1회</span><div class="hint">저작권 보호 때문에 앱에 머지큐브 무늬를 내장하지 않습니다. 실제 큐브의 각 면을 카메라로 한 번씩 등록해 사용합니다.</div></div>
+      <div class="row"><button id="startCam" class="btn primary">카메라 시작</button><button id="resetFaces" class="btn danger small">등록 초기화</button></div>
+    </div>
+    <div class="faceGrid" id="faceGrid"></div>
+    <div class="row" style="margin-top:9px"><button id="exportCfg" class="btn">설정 내보내기</button><label class="btn" for="importCfg">설정 가져오기</label><input id="importCfg" type="file" accept="application/json" hidden></div>
+    <div class="hint">교사가 6면을 한 번 등록한 뒤 설정 파일을 내보내 학생 기기에 가져오면, 학생마다 다시 등록할 필요가 없습니다.</div>
+  </section>
+
+  <section class="card">
+    <b>2. 보고 싶은 3D 고르기</b>
+    <div class="models" style="margin-top:10px">
+      <button class="modelBtn active" data-model="cat"><span class="emoji">🐱</span>고양이</button>
+      <button class="modelBtn" data-model="dino"><span class="emoji">🦖</span>공룡</button>
+      <button class="modelBtn" data-model="car"><span class="emoji">🚗</span>자동차</button>
+      <button class="modelBtn" data-model="burger"><span class="emoji">🍔</span>햄버거</button>
+      <button class="modelBtn" data-model="robot"><span class="emoji">🤖</span>로봇</button>
+    </div>
+    <div class="custom row"><label class="btn" for="customGlb">＋ 내 GLB 추가</label><input id="customGlb" type="file" accept=".glb,model/gltf-binary" hidden><button id="smaller" class="btn">작게</button><button id="larger" class="btn">크게</button></div>
+  </section>
+
+  <section class="card">
+    <div class="row" style="justify-content:space-between;align-items:center"><b>3. 큐브를 비춰보기</b><button id="trackBtn" class="btn primary" disabled>추적 시작</button></div>
+    <div class="stage" id="stage">
+      <video id="video" playsinline muted></video>
+      <canvas id="threeCanvas"></canvas>
+      <canvas id="debugCanvas" class="overlay2d"></canvas>
+      <div class="target" id="target"></div>
+    </div>
+    <div class="captureBar"><button id="addFace" class="btn primary" disabled>📸 현재 면 등록</button><div id="faceProgress" class="captureProgress">0 / 6</div></div><div id="status" class="status">카메라를 시작해 주세요.</div>
+    <div class="hint">첫 버전은 등록된 큐브 면을 이미지로 인식해 3D를 면 위에 고정하는 방식입니다. Merge 공식 앱처럼 완전한 6축 큐브 추적은 아니지만, 수업용으로 큐브를 돌리며 여러 면을 인식하는 체험을 할 수 있게 설계했습니다.</div>
+  </section>
+</div>
+
+<script async src="https://docs.opencv.org/4.x/opencv.js"></script>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import {GLTFLoader} from 'three/addons/loaders/GLTFLoader.js';
+
+const video=document.getElementById('video'), threeCanvas=document.getElementById('threeCanvas'), debugCanvas=document.getElementById('debugCanvas');
+const statusEl=document.getElementById('status'), addFace=document.getElementById('addFace'), trackBtn=document.getElementById('trackBtn'), target=document.getElementById('target'), faceProgress=document.getElementById('faceProgress');
+let stream=null, tracking=false, refs=[], refData=[], currentModel=null, modelScale=1.0, cvReady=false;
+const faceGrid=document.getElementById('faceGrid');
+
+const renderer=new THREE.WebGLRenderer({canvas:threeCanvas,alpha:true,antialias:true});
+renderer.setClearColor(0x000000,0);
+const scene=new THREE.Scene();
+const camera=new THREE.OrthographicCamera(0,1,1,0,-100,100);
+scene.add(new THREE.HemisphereLight(0xffffff,0x666666,2.4));
+const dl=new THREE.DirectionalLight(0xffffff,2); dl.position.set(1,2,3); scene.add(dl);
+const loader=new GLTFLoader();
+
+function fitRenderer(){
+ const r=video.getBoundingClientRect(); const dpr=Math.min(devicePixelRatio||1,2);
+ renderer.setSize(r.width,r.height,false); debugCanvas.width=r.width*dpr; debugCanvas.height=r.height*dpr; debugCanvas.style.width=r.width+'px';debugCanvas.style.height=r.height+'px';
+}
+window.addEventListener('resize',fitRenderer);
+
+function mat(color){return new THREE.MeshStandardMaterial({color,roughness:.65,metalness:.05})}
+function mesh(g,m,x=0,y=0,z=0){const o=new THREE.Mesh(g,m);o.position.set(x,y,z);return o}
+function groupFit(g){
+ const box=new THREE.Box3().setFromObject(g), size=new THREE.Vector3(); box.getSize(size); const c=new THREE.Vector3(); box.getCenter(c);
+ g.position.sub(c); const m=Math.max(size.x,size.y,size.z)||1; const base=0.7/m; g.scale.setScalar(base); g.userData.base=base; return g;
+}
+function makeCat(){
+ const g=new THREE.Group(), fur=mat(0xf2b66d), dark=mat(0x3b2f2f), pink=mat(0xffa6b8);
+ g.add(mesh(new THREE.SphereGeometry(.42,24,18),fur,0,0,.12));
+ g.add(mesh(new THREE.SphereGeometry(.28,24,18),fur,0,.45,.18));
+ const earGeo=new THREE.ConeGeometry(.13,.28,3); const e1=mesh(earGeo,fur,-.18,.69,.18), e2=mesh(earGeo,fur,.18,.69,.18); e1.rotation.z=.12;e2.rotation.z=-.12;g.add(e1,e2);
+ g.add(mesh(new THREE.SphereGeometry(.04,12,8),dark,-.10,.50,.43),mesh(new THREE.SphereGeometry(.04,12,8),dark,.10,.50,.43));
+ g.add(mesh(new THREE.SphereGeometry(.035,12,8),pink,0,.42,.46)); return groupFit(g);
+}
+function makeDino(){
+ const g=new THREE.Group(), green=mat(0x64b96a), light=mat(0xa9df87), dark=mat(0x2f5132);
+ g.add(mesh(new THREE.SphereGeometry(.48,24,18),green,0,0,.08)); g.add(mesh(new THREE.SphereGeometry(.29,24,18),green,.28,.42,.12));
+ const neck=mesh(new THREE.CylinderGeometry(.12,.19,.48,16),green,.08,.24,.08);neck.rotation.z=-.45;g.add(neck);
+ const tail=mesh(new THREE.ConeGeometry(.18,.72,18),green,-.50,-.05,.05);tail.rotation.z=-1.25;g.add(tail);
+ for(let i=0;i<4;i++){const sp=mesh(new THREE.ConeGeometry(.08,.20,3),light,-.28+i*.16,.34,.12);sp.rotation.z=Math.PI;g.add(sp)}
+ g.add(mesh(new THREE.SphereGeometry(.035,10,8),dark,.36,.48,.36)); return groupFit(g);
+}
+function makeCar(){
+ const g=new THREE.Group(), blue=mat(0x4d89d9), glass=mat(0xb7d9ee), tire=mat(0x222222);
+ g.add(mesh(new THREE.BoxGeometry(1.1,.38,.42),blue,0,0,.12)); g.add(mesh(new THREE.BoxGeometry(.62,.30,.38),blue,.05,.28,.12)); g.add(mesh(new THREE.BoxGeometry(.46,.19,.40),glass,.05,.31,.15));
+ for(const x of [-.35,.35]) for(const z of [-.22,.22]){const w=mesh(new THREE.CylinderGeometry(.13,.13,.09,20),tire,x,-.18,z);w.rotation.x=Math.PI/2;g.add(w)} return groupFit(g);
+}
+function makeBurger(){
+ const g=new THREE.Group(), bun=mat(0xe6a24e), patty=mat(0x6b3c26), cheese=mat(0xf4d35e), green=mat(0x6fbf73);
+ g.add(mesh(new THREE.SphereGeometry(.48,24,16,0,Math.PI*2,0,Math.PI/2),bun,0,.28,0)); g.add(mesh(new THREE.CylinderGeometry(.46,.46,.11,28),green,0,.06,0)); g.add(mesh(new THREE.CylinderGeometry(.43,.43,.16,28),patty,0,-.07,0));
+ const ch=mesh(new THREE.BoxGeometry(.72,.05,.72),cheese,0,.04,0); ch.rotation.y=.3;g.add(ch); g.add(mesh(new THREE.CylinderGeometry(.45,.47,.16,28),bun,0,-.23,0)); return groupFit(g);
+}
+function makeRobot(){
+ const g=new THREE.Group(), body=mat(0xb9c5d1), blue=mat(0x5aa0e6), dark=mat(0x334155);
+ g.add(mesh(new THREE.BoxGeometry(.62,.68,.42),body,0,0,.08)); g.add(mesh(new THREE.BoxGeometry(.52,.36,.40),body,0,.56,.08));
+ g.add(mesh(new THREE.SphereGeometry(.045,10,8),blue,-.13,.60,.30),mesh(new THREE.SphereGeometry(.045,10,8),blue,.13,.60,.30));
+ for(const x of [-.42,.42]){const a=mesh(new THREE.CylinderGeometry(.06,.06,.48,12),dark,x,.04,.08);a.rotation.z=Math.PI/2;g.add(a)} for(const x of [-.18,.18])g.add(mesh(new THREE.CylinderGeometry(.07,.07,.42,12),dark,x,-.52,.08)); return groupFit(g);
+}
+function createProcedural(name){return ({cat:makeCat,dino:makeDino,car:makeCar,burger:makeBurger,robot:makeRobot}[name]||makeCat)()}
+async function loadBuiltin(name){if(currentModel){scene.remove(currentModel);currentModel=null} currentModel=createProcedural(name); scene.add(currentModel)}
+async function loadCustom(src){if(currentModel){scene.remove(currentModel);currentModel=null} return new Promise((resolve,reject)=>loader.load(src,g=>{currentModel=groupFit(g.scene);scene.add(currentModel);resolve()},undefined,reject))}
+await loadBuiltin('cat');
+
+document.querySelectorAll('.modelBtn').forEach(b=>b.onclick=async()=>{document.querySelectorAll('.modelBtn').forEach(x=>x.classList.remove('active'));b.classList.add('active');await loadBuiltin(b.dataset.model);});
+document.getElementById('customGlb').onchange=async e=>{const f=e.target.files[0];if(!f)return; const u=URL.createObjectURL(f); await loadCustom(u); statusEl.textContent='내 GLB를 불러왔어요.'};
+document.getElementById('smaller').onclick=()=>{modelScale=Math.max(.45,modelScale*.85)};
+document.getElementById('larger').onclick=()=>{modelScale=Math.min(2.2,modelScale*1.15)};
+
+function saveRefs(){localStorage.setItem('mergeCubeRefs',JSON.stringify(refs)); renderFaces(); prepareRefs();}
+function loadRefs(){try{refs=JSON.parse(localStorage.getItem('mergeCubeRefs')||'[]')}catch{refs=[]} renderFaces();}
+function renderFaces(){
+ faceGrid.innerHTML='';
+ for(let i=0;i<6;i++){
+  const d=document.createElement('div');d.className='face'; const c=document.createElement('canvas');c.width=c.height=220; const ft=document.createElement('footer');ft.textContent=refs[i]?`면 ${i+1} ✓`:`면 ${i+1} 미등록`;d.append(c,ft);faceGrid.append(d);
+  if(refs[i]){const im=new Image();im.onload=()=>c.getContext('2d').drawImage(im,0,0,220,220);im.src=refs[i];}
+ }
+ const done=refs.filter(Boolean).length;
+ faceProgress.textContent=`${done} / 6`;
+ if(done>=6){addFace.textContent='✅ 6면 등록 완료';addFace.disabled=true;} else {addFace.textContent=`📸 현재 면 등록 (${done+1}/6)`; if(stream) addFace.disabled=false;}
+ trackBtn.disabled=refs.length===0;
+}
+loadRefs();
+
+function waitCV(){
+ const t=setInterval(()=>{if(window.cv && cv.Mat){clearInterval(t);cvReady=true;statusEl.textContent='준비 완료. 카메라를 시작하세요.';prepareRefs();}},400)
+}
+waitCV();
+
+async function startCamera(){
+ const btn=document.getElementById('startCam');
+ btn.disabled=true;
+ statusEl.textContent='카메라 확인 중…';
+ try{
+   if(!window.isSecureContext){throw new Error('HTTPS 보안 연결에서만 카메라를 사용할 수 있어요. 공개주소를 https:// 로 직접 열어주세요.');}
+   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){if(window.top !== window.self){throw new Error('현재 미리보기 화면에서는 카메라 사용이 차단되어 있어요. 공개된 웹주소를 새 탭에서 직접 열어주세요.');}throw new Error('이 브라우저에서는 카메라 API를 사용할 수 없어요. Chrome 또는 Edge에서 열어주세요.');}
+   if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+   let lastErr=null;
+   const attempts=[{video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}},audio:false},{video:{width:{ideal:1280},height:{ideal:720}},audio:false},{video:true,audio:false}];
+   for(const constraints of attempts){try{ stream=await navigator.mediaDevices.getUserMedia(constraints); break; }catch(e){ lastErr=e; }}
+   if(!stream) throw lastErr || new Error('카메라를 시작하지 못했습니다.');
+   video.srcObject=stream; video.setAttribute('playsinline',''); video.muted=true; await video.play();
+   if(refs.filter(Boolean).length<6) addFace.disabled=false;
+   fitRenderer();
+   statusEl.textContent='카메라가 켜졌어요. 큐브 면을 점선 네모 안에 맞춘 뒤 바로 아래 “현재 면 등록”을 누르세요.';
+   btn.textContent='카메라 다시 시작';
+ }catch(e){
+   console.error(e); const name=e&&e.name?e.name:''; let msg=e&&e.message?e.message:String(e);
+   if(name==='NotAllowedError') msg='카메라 권한이 거부됐어요. 주소창의 카메라 권한을 허용한 뒤 다시 눌러주세요.';
+   else if(name==='NotFoundError') msg='사용 가능한 카메라를 찾지 못했어요.';
+   else if(name==='NotReadableError') msg='다른 앱이 카메라를 사용 중일 수 있어요. 다른 앱을 닫고 다시 시도해 주세요.';
+   else if(name==='OverconstrainedError') msg='후면 카메라 조건을 사용할 수 없어 다른 카메라로 다시 시도해 주세요.';
+   statusEl.textContent='카메라를 열 수 없습니다: '+msg;
+ }finally{ btn.disabled=false; }
+}
+document.getElementById('startCam').onclick=startCamera;
+if(window.top !== window.self){statusEl.textContent='미리보기에서는 카메라가 차단될 수 있어요. 배포된 공개주소를 새 탭에서 직접 열어 테스트하세요.';}
+
+addFace.onclick=()=>{
+ if(!video.videoWidth)return;
+ const temp=document.createElement('canvas'); const size=Math.min(video.videoWidth,video.videoHeight)*0.48; temp.width=temp.height=420; const ctx=temp.getContext('2d');
+ const sx=(video.videoWidth-size)/2, sy=(video.videoHeight-size)/2; ctx.drawImage(video,sx,sy,size,size,0,0,420,420);
+ const data=temp.toDataURL('image/jpeg',.88); const idx=refs.findIndex(x=>!x); if(idx===-1){refs[5]=data}else refs[idx]=data; saveRefs(); const done=refs.filter(Boolean).length; statusEl.textContent=done>=6?'6면 등록이 모두 끝났어요. 이제 아래에서 3D를 고르고 추적을 시작하세요.':'면을 등록했습니다. 큐브를 돌려 다음 면을 화면 가운데 맞춘 뒤 바로 아래 버튼을 누르세요.';
+};
+document.getElementById('resetFaces').onclick=()=>{refs=[];localStorage.removeItem('mergeCubeRefs');refData.forEach(r=>disposeRef(r));refData=[];renderFaces();if(stream)addFace.disabled=false;statusEl.textContent='등록을 초기화했습니다. 큐브 면을 화면 가운데 맞춘 뒤 바로 아래 등록 버튼을 누르세요.'};
+
+document.getElementById('exportCfg').onclick=()=>{const blob=new Blob([JSON.stringify({version:1,refs})],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='merge-cube-face-settings.json';a.click();};
+document.getElementById('importCfg').onchange=e=>{const f=e.target.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{try{const j=JSON.parse(rd.result);refs=j.refs||[];saveRefs();statusEl.textContent='설정을 가져왔습니다.'}catch{statusEl.textContent='설정 파일을 읽지 못했습니다.'}};rd.readAsText(f)};
+
+function disposeRef(r){try{r.gray.delete();r.kp.delete();r.des.delete()}catch{}}
+async function prepareRefs(){
+ if(!cvReady||!refs.length)return; refData.forEach(disposeRef);refData=[];
+ for(const data of refs){
+  if(!data)continue; const img=await imageFrom(data); const can=document.createElement('canvas');can.width=can.height=360;can.getContext('2d').drawImage(img,0,0,360,360);
+  const src=cv.imread(can), gray=new cv.Mat();cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);src.delete();
+  const orb=new cv.ORB(850);const kp=new cv.KeyPointVector(),des=new cv.Mat(),mask=new cv.Mat();orb.detectAndCompute(gray,mask,kp,des);orb.delete();mask.delete();
+  refData.push({gray,kp,des,w:360,h:360});
+ }
+ trackBtn.disabled=refData.length===0;
+}
+function imageFrom(src){return new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=src})}
+
+trackBtn.onclick=()=>{tracking=!tracking;trackBtn.textContent=tracking?'추적 중지':'추적 시작';target.classList.toggle('hidden',tracking);if(tracking)loop();else{if(currentModel)currentModel.visible=false;clearDebug();}};
+
+let workCanvas=document.createElement('canvas'), wctx=workCanvas.getContext('2d',{willReadFrequently:true});
+function clearDebug(){const c=debugCanvas.getContext('2d');c.clearRect(0,0,debugCanvas.width,debugCanvas.height)}
+function loop(){if(!tracking)return;requestAnimationFrame(loop);if(!cvReady||video.readyState<2||!refData.length)return;processFrame();}
+let last=0;
+function processFrame(){
+ const now=performance.now();if(now-last<90)return;last=now;
+ const W=480, H=Math.round(W*video.videoHeight/video.videoWidth);workCanvas.width=W;workCanvas.height=H;wctx.drawImage(video,0,0,W,H);
+ let src=cv.imread(workCanvas), gray=new cv.Mat();cv.cvtColor(src,gray,cv.COLOR_RGBA2GRAY);
+ const orb=new cv.ORB(950), kp=new cv.KeyPointVector(), des=new cv.Mat(), mask=new cv.Mat();orb.detectAndCompute(gray,mask,kp,des);orb.delete();mask.delete();
+ let best=null;
+ if(!des.empty()){
+  for(let ri=0;ri<refData.length;ri++){
+   const ref=refData[ri]; if(ref.des.empty())continue;
+   const matcher=new cv.BFMatcher(cv.NORM_HAMMING,false), matches=new cv.DMatchVectorVector();matcher.knnMatch(ref.des,des,matches,2);matcher.delete();
+   const good=[];for(let i=0;i<matches.size();i++){const m=matches.get(i);if(m.size()>=2){const a=m.get(0),b=m.get(1);if(a.distance<0.72*b.distance)good.push([a.queryIdx,a.trainIdx,a.distance]);}}
+   matches.delete();if(good.length<12)continue;
+   const srcPts=[],dstPts=[];for(const [qi,ti] of good){const a=ref.kp.get(qi).pt,b=kp.get(ti).pt;srcPts.push(a.x,a.y);dstPts.push(b.x,b.y)}
+   const sp=cv.matFromArray(good.length,1,cv.CV_32FC2,srcPts),dp=cv.matFromArray(good.length,1,cv.CV_32FC2,dstPts),inl=new cv.Mat();const Hm=cv.findHomography(sp,dp,cv.RANSAC,4,inl);let inliers=0;for(let i=0;i<inl.rows;i++)inliers+=inl.ucharPtr(i)[0]?1:0;sp.delete();dp.delete();inl.delete();
+   if(Hm.empty()||inliers<9){Hm.delete();continue}
+   if(!best||inliers>best.score){if(best)best.H.delete();best={score:inliers,H:Hm,ref,face:ri}}else Hm.delete();
+  }
+ }
+ if(best){renderTracked(best,W,H);best.H.delete();statusEl.textContent=`면 ${best.face+1} 인식 중 ✓`;}
+ else{if(currentModel)currentModel.visible=false;clearDebug();statusEl.textContent='큐브 면을 찾는 중…';}
+ src.delete();gray.delete();kp.delete();des.delete();
+}
+
+function project(H,x,y){const h=H.data64F.length?H.data64F:Array.from(H.data32F);const a=h[0]*x+h[1]*y+h[2],b=h[3]*x+h[4]*y+h[5],c=h[6]*x+h[7]*y+h[8];return [a/c,b/c];}
+function renderTracked(best,W,H){
+ const r=best.ref; const p=[project(best.H,0,0),project(best.H,r.w,0),project(best.H,r.w,r.h),project(best.H,0,r.h)];
+ const cx=p.reduce((s,q)=>s+q[0],0)/4,cy=p.reduce((s,q)=>s+q[1],0)/4; const top=Math.hypot(p[1][0]-p[0][0],p[1][1]-p[0][1]),left=Math.hypot(p[3][0]-p[0][0],p[3][1]-p[0][1]); const sz=(top+left)/2;
+ const angle=Math.atan2(p[1][1]-p[0][1],p[1][0]-p[0][0]);
+ if(currentModel){currentModel.visible=true;currentModel.position.set(cx/W,1-cy/H,0);currentModel.rotation.z=-angle; const s=(sz/W)*modelScale; const base=currentModel.userData.base||1;currentModel.scale.setScalar(base*s*2.05);}
+ renderer.render(scene,camera);
+ const rect=video.getBoundingClientRect(), sx=rect.width/W,sy=rect.height/H,dpr=Math.min(devicePixelRatio||1,2),c=debugCanvas.getContext('2d');c.setTransform(dpr,0,0,dpr,0,0);c.clearRect(0,0,rect.width,rect.height);c.strokeStyle='#66ff99';c.lineWidth=3;c.beginPath();p.forEach((q,i)=>{const x=q[0]*sx,y=q[1]*sy;i?c.lineTo(x,y):c.moveTo(x,y)});c.closePath();c.stroke();c.setTransform(1,0,0,1,0,0);
+}
+(function anim(){requestAnimationFrame(anim);renderer.render(scene,camera)})();
+</script>
+</body>
+</html>
