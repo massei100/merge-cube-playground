@@ -1,0 +1,37 @@
+name: Add face image upload
+on:
+  push:
+    paths:
+      - '.github/workflows/add-face-image-upload.yml'
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch index.html
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('index.html')
+          s=p.read_text()
+          s=s.replace('각 면을 한 번씩 촬영해 주세요. 등록한 면마다 어떤 3D를 보여줄지 아래에서 따로 지정합니다.','각 면은 카메라로 촬영하거나 인쇄용 파일의 면 이미지를 업로드해 등록할 수 있습니다. 등록한 면마다 어떤 3D를 보여줄지 아래에서 따로 지정합니다.')
+          s=s.replace('면 1을 비추면 면 1에 지정한 모델만, 면 2를 비추면 면 2 모델만 나타납니다. 같은 모델을 여러 면에 지정해도 됩니다.','면 1을 비추면 면 1에 지정한 모델만, 면 2를 비추면 면 2 모델만 나타납니다. 각 면 카드의 “이미지 등록”을 누르면 인쇄용 파일에서 캡처한 이미지를 바로 사용할 수 있습니다.')
+          helper="""function registerFaceImage(i,file){if(!file)return;const rd=new FileReader();rd.onload=()=>{const im=new Image();im.onload=()=>{const out=document.createElement('canvas');out.width=out.height=420;const ctx=out.getContext('2d');const side=Math.min(im.naturalWidth,im.naturalHeight),sx=(im.naturalWidth-side)/2,sy=(im.naturalHeight-side)/2;ctx.fillStyle='#fff';ctx.fillRect(0,0,420,420);ctx.drawImage(im,sx,sy,side,side,0,0,420,420);refs[i]=out.toDataURL('image/jpeg',.94);saveRefs();statusEl.textContent=`면 ${i+1} 이미지를 등록했습니다. 실제 큐브에서 같은 면을 비춰 인식을 확인해 보세요.`};im.onerror=()=>{statusEl.textContent='이미지를 읽지 못했습니다.'};im.src=rd.result};rd.readAsDataURL(file)}
+"""
+          replacement="""function renderFaceList(){faceList.innerHTML='';for(let i=0;i<6;i++){const item=document.createElement('div');item.className='faceItem';const thumb=document.createElement('div');thumb.className='thumb';const c=document.createElement('canvas');c.width=c.height=180;thumb.append(c);const badge=document.createElement('div');badge.className='badge';badge.textContent=`면 ${i+1}`;thumb.append(badge);if(refs[i]){const im=new Image();im.onload=()=>c.getContext('2d').drawImage(im,0,0,180,180);im.src=refs[i]}const info=document.createElement('div');info.className='faceInfo';const nm=document.createElement('div');nm.className='faceName';nm.textContent=refs[i]?'등록됨 ✓':'아직 미등록';const sel=document.createElement('select');sel.className='select';for(const key of Object.keys(modelMeta)){const op=document.createElement('option');op.value=key;op.textContent=`${modelMeta[key][0]} ${modelMeta[key][1]}`;if(assignments[i]===key)op.selected=true;sel.append(op)}sel.onchange=()=>{assignments[i]=sel.value;saveAssignments()};const acts=document.createElement('div');acts.className='faceActions';const file=document.createElement('input');file.type='file';file.accept='image/*';file.hidden=true;file.onchange=e=>{registerFaceImage(i,e.target.files?.[0]);e.target.value=''};const upload=document.createElement('button');upload.className='mini active';upload.textContent=refs[i]?'🖼 이미지 교체':'🖼 이미지 등록';upload.onclick=()=>file.click();const retake=document.createElement('button');retake.className='mini';retake.textContent='📷 카메라로 등록';retake.onclick=()=>{if(!stream){statusEl.textContent='먼저 위에서 카메라를 시작해 주세요.';return}refs[i]=null;saveRefs();statusEl.textContent=`면 ${i+1}을 점선 안에 맞춘 뒤 아래 촬영 버튼으로 등록해 주세요.`};acts.append(upload,retake,file);info.append(nm,sel,acts);item.append(thumb,info);faceList.append(item)}}
+"""
+          if 'function registerFaceImage(' not in s:
+              s=s.replace('function renderFaceList(){', helper+'function renderFaceList(){',1)
+          s=re.sub(r"function renderFaceList\(\)\{.*?\}\nloadRefs\(\);", replacement+'loadRefs();', s, count=1, flags=re.S)
+          p.write_text(s)
+          PY
+      - name: Commit changes
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add index.html
+          git diff --cached --quiet || git commit -m 'Add per-face image upload'
+          git push
